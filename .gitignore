@@ -1,0 +1,10 @@
+# python cache
+*.pyc
+__pycache__
+
+# logs
+logs
+*.log
+
+# db
+*.db

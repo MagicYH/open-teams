@@ -37,18 +37,91 @@ dependencies = [
     "aiohttp>=3.9.0",
     "agent-client-protocol>=0.1.0",
     "pyyaml>=6.0.0",
+    "python-json-logger>=2.0.0",
+    "uuid>=1.30",
 ]
 
 [tool.uv.snake]
 true
 ```
 
-**Step 2: 创建基础 FastAPI 应用**
+**Step 2: 创建基础 FastAPI 应用（含日志配置）**
 
 ```python
+import logging
+import sys
+from logging.handlers import TimedRotatingFileHandler
+from pythonjsonlogger import jsonlogger
+
+# 配置 JSON 日志格式
+class CustomJsonFormatter(jsonlogger.JsonFormatter):
+    def add_fields(self, log_record, record, message_dict):
+        super().add_fields(log_record, record, message_dict)
+        log_record["extra"] = {
+            "log_id": getattr(record, "log_id", None),
+            "project_id": getattr(record, "project_id", None),
+            "feature_id": getattr(record, "feature_id", None),
+            "member_id": getattr(record, "member_id", None),
+        }
+
+def setup_logging():
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # 控制台输出
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
+    
+    # 文件输出（JSON 格式，方便解析）
+    file_handler = TimedRotatingFileHandler(
+        "logs/app.log", when="midnight", interval=1
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_formatter = CustomJsonFormatter(
+        "%(asctime)s %(name)s %(levelname)s %(message)s"
+    )
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
+    
+    return logger
+
+logger = setup_logging()
+
 from fastapi import FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+import uuid
 
 app = FastAPI(title="ACP Teams Backend")
+
+# LogID 中间件
+class LogIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        log_id = request.headers.get("X-LogID") or f"req_{uuid.uuid4().hex[:12]}"
+        request.state.log_id = log_id
+        
+        response = await call_next(request)
+        response.headers["X-LogID"] = log_id
+        return response
+
+app.add_middleware(LogIDMiddleware)
+
+def get_log_id(request: Request) -> str:
+    return getattr(request.state, "log_id", "unknown")
+
+@app.on_event("startup")
+async def startup():
+    logger.info("应用启动", extra={})
+
+@app.on_event("shutdown")
+async def shutdown():
+    logger.info("应用关闭", extra={})
 
 @app.get("/health")
 async def health():
@@ -155,12 +228,15 @@ class ProjectResponse(BaseModel):
         from_attributes = True
 ```
 
-**Step 2: 创建 API 路由**
+**Step 2: 创建 API 路由（含日志）**
 
 ```python
-from fastapi import APIRouter, Depends
+import logging
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.models.database import SessionLocal, Project
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -171,17 +247,79 @@ def get_db():
     finally:
         db.close()
 
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.orm import Session
+from app.models.database import SessionLocal, Project
+from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/projects", tags=["projects"])
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+class ProjectResponse(BaseModel):
+    id: int
+    name: str
+    directory: str
+    log_id: str
+    
+    class Config:
+        from_attributes = True
+
+class ErrorResponse(BaseModel):
+    detail: str
+    log_id: str
+
 @router.post("/", response_model=ProjectResponse)
-def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
+def create_project(project: ProjectCreate, request: Request, db: Session = Depends(get_db)):
+    log_id = get_log_id(request)
+    logger.info(
+        "创建项目",
+        extra={
+            "log_id": log_id,
+            "project_id": None,
+            "name": project.name,
+            "directory": project.directory,
+        }
+    )
     db_project = Project(**project.model_dump())
     db.add(db_project)
     db.commit()
     db.refresh(db_project)
-    return db_project
+    logger.info(
+        "项目创建成功",
+        extra={
+            "log_id": log_id,
+            "project_id": db_project.id,
+            "name": db_project.name,
+        }
+    )
+    return {**db_project.__dict__, "log_id": log_id}
 
 @router.get("/", response_model=list[ProjectResponse])
-def list_projects(db: Session = Depends(get_db)):
-    return db.query(Project).all()
+def list_projects(request: Request, db: Session = Depends(get_db)):
+    log_id = get_log_id(request)
+    projects = db.query(Project).all()
+    logger.debug("获取项目列表", extra={"log_id": log_id, "count": len(projects)})
+    return [{**p.__dict__, "log_id": log_id} for p in projects]
+
+@router.delete("/{project_id}")
+def delete_project(project_id: int, request: Request, db: Session = Depends(get_db)):
+    log_id = get_log_id(request)
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        logger.warning("删除项目，项目不存在", extra={"log_id": log_id, "project_id": project_id})
+        raise HTTPException(status_code=404, detail="Project not found")
+    logger.info("删除项目", extra={"log_id": log_id, "project_id": project_id})
+    db.delete(project)
+    db.commit()
+    return {"status": "deleted", "log_id": log_id}
 ```
 
 **Step 3: 注册路由**
@@ -321,20 +459,29 @@ from datetime import datetime
 
 class TeamMemberCreate(BaseModel):
     name: str
+    display_name: str | None = None  # 显示名称
+    color: str | None = None  # UI 展示颜色
     role: str
     prompt: str
+    acp_start_command: str = "opencode acp"  # 默认启动命令
 
 class TeamMemberUpdate(BaseModel):
     name: str | None = None
+    display_name: str | None = None
+    color: str | None = None
     role: str | None = None
     prompt: str | None = None
+    acp_start_command: str | None = None
 
 class TeamMemberResponse(BaseModel):
     id: int
     team_id: int
     name: str
+    display_name: str | None = None
+    color: str | None = None
     role: str
     prompt: str
+    acp_start_command: str
     
     class Config:
         from_attributes = True
@@ -437,6 +584,19 @@ def create_default_team(db: Session, project_id: int):
         db_member = TeamMember(
             team_id=team.id,
             name=member["name"],
+            display_name=member.get("display_name"),
+            color=member.get("color"),
+            role=member["role"],
+            prompt=member["prompt"],
+            acp_start_command=member.get("acp_start_command", "opencode acp")
+        )
+        db.add(db_member)
+    db.commit()
+    db.refresh(team)
+    for member in config.get("members", []):
+        db_member = TeamMember(
+            team_id=team.id,
+            name=member["name"],
             role=member["role"],
             prompt=member["prompt"]
         )
@@ -488,6 +648,8 @@ git commit -m "feat: 添加 Team Member CRUD API"
 - Create: `backend/app/schemas/message.py`
 - Create: `backend/app/routers/message.py`
 
+**说明：** 消息可以来自用户（@User）或团队成员（@PM, @Developer 等）。所有带 @的消息都需要存入群聊并广播。
+
 **Step 1: 创建消息 Schema**
 
 ```python
@@ -496,9 +658,9 @@ from datetime import datetime
 
 class MessageCreate(BaseModel):
     feature_id: int
-    sender: str
+    sender: str  # 可以是 @User 或 @角色名称
     content: str
-    mentions: list[str] = []
+    mentions: list[str] = []  # 被 @的角色列表
 
 class MessageResponse(BaseModel):
     id: int
@@ -539,7 +701,10 @@ git commit -m "feat: 添加消息和工作日志 API"
 **Step 1: 创建 WebSocket 路由**
 
 ```python
+import uuid
 from fastapi import WebSocket, WebSocketDisconnect
+
+logger = logging.getLogger(__name__)
 
 class ConnectionManager:
     def __init__(self):
@@ -547,18 +712,43 @@ class ConnectionManager:
     
     async def connect(self, feature_id: int, websocket: WebSocket):
         await websocket.accept()
+        ws_id = f"ws_{uuid.uuid4().hex[:8]}"
+        websocket.state.ws_id = ws_id
         if feature_id not in self.active_connections:
             self.active_connections[feature_id] = []
         self.active_connections[feature_id].append(websocket)
+        logger.info(
+            "WebSocket 连接",
+            extra={
+                "feature_id": feature_id,
+                "ws_id": ws_id,
+            }
+        )
     
     def disconnect(self, feature_id: int, websocket: WebSocket):
+        ws_id = getattr(websocket.state, "ws_id", "unknown")
         if feature_id in self.active_connections:
             self.active_connections[feature_id].remove(websocket)
+        logger.info(
+            "WebSocket 断开",
+            extra={
+                "feature_id": feature_id,
+                "ws_id": ws_id,
+            }
+        )
     
     async def broadcast(self, feature_id: int, message: dict):
         if feature_id in self.active_connections:
             for connection in self.active_connections[feature_id]:
                 await connection.send_json(message)
+            logger.debug(
+                "WebSocket 广播消息",
+                extra={
+                    "feature_id": feature_id,
+                    "message_id": message.get("id"),
+                    "recipients": len(self.active_connections[feature_id]),
+                }
+            )
 ```
 
 **Step 2: 添加 WebSocket 端点**
@@ -595,39 +785,123 @@ git commit -m "feat: 添加 WebSocket 实时通信"
 **Files:**
 - Create: `backend/app/services/acp_client.py`
 
-**Step 1: 创建 ACP 客户端服务**
+**Step 1: 创建 ACP 客户端服务（含日志）**
 
 ```python
 import asyncio
+import logging
 from typing import Optional
 from agent_client_protocol import AcpClient
+
+logger = logging.getLogger(__name__)
 
 class ACPClientManager:
     def __init__(self):
         self.clients: dict[int, AcpClient] = {}
         self.queues: dict[int, asyncio.Queue] = {}
     
-    async def start_client(self, member_id: int):
+    async def start_client(self, member_id: int, member_name: str, command: str):
+        logger.info(
+            "启动 ACP 客户端",
+            extra={
+                "member_id": member_id,
+                "member_name": member_name,
+                "command": command,
+            }
+        )
         client = AcpClient()
         await client.initialize()
         self.clients[member_id] = client
         self.queues[member_id] = asyncio.Queue()
-        asyncio.create_task(self._process_queue(member_id))
+        asyncio.create_task(self._process_queue(member_id, member_name))
+        logger.info(
+            "ACP 客户端启动成功",
+            extra={"member_id": member_id, "member_name": member_name}
+        )
     
-    async def _process_queue(self, member_id: int):
+    async def _process_queue(self, member_id: int, member_name: str):
         while True:
-            message = await self.queues[member_id].get()
-            client = self.clients[member_id]
-            # 处理消息
+            message_data = await self.queues[member_id].get()
+            feature_id = message_data["feature_id"]
+            content = message_data["content"]
+            
+            logger.info(
+                "开始处理消息",
+                extra={
+                    "feature_id": feature_id,
+                    "member_id": member_id,
+                    "member_name": member_name,
+                    "content": content[:100],  # 截断避免日志过长
+                }
+            )
+            # 处理消息...
 ```
 
 **Step 2: 消息处理逻辑**
 
-- 解析消息中的 @mentions
-- 为每个被 @的成员创建/获取 session
-- 将消息加入队列
+- 解析消息中的 @mentions（可以是用户或角色）
+- 所有消息（无论来自用户还是角色）只要包含 @，都需要存入群聊数据库
+- 为每个被 @的成员（除了发送者自己）创建/获取 session，加入队列
+- 如果发送者是角色且 @User，消息已在群聊中，用户可见
 
-**Step 3: 实现工作日志记录**
+**Step 3: 处理角色发送的消息（含日志）**
+
+```python
+async def handle_member_message(self, feature_id: int, sender_member_id: int, content: str):
+    sender = self.get_member_name(sender_member_id)
+    logger.info(
+        "角色发送消息",
+        extra={
+            "feature_id": feature_id,
+            "member_id": sender_member_id,
+            "sender": sender,
+            "content": content[:100],
+        }
+    )
+    
+    # 1. 解析 mentions
+    mentions = parse_mentions(content)
+    logger.debug(
+        "解析 mentions",
+        extra={"feature_id": feature_id, "mentions": mentions}
+    )
+    
+    # 2. 存入群聊消息（所有带 @的消息都要存入群聊）
+    message = Message(
+        feature_id=feature_id,
+        sender=sender,
+        content=content,
+        mentions=mentions
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    logger.info(
+        "消息存入群聊",
+        extra={
+            "feature_id": feature_id,
+            "message_id": message.id,
+            "sender": sender,
+            "mentions": mentions,
+        }
+    )
+    
+    # 3. 广播到群聊（WebSocket）
+    await ws_manager.broadcast(feature_id, message)
+    logger.debug(
+        "消息已广播",
+        extra={"feature_id": feature_id, "message_id": message.id}
+    )
+    
+    # 4. 如果有 @其他角色，加入对应队列
+    for mention in mentions:
+        if mention != sender:  # 不需要发给自己
+            member_id = self.get_member_id_by_name(mention)
+            if member_id:
+                await self.send_to_member(feature_id, member_id, content)
+```
+
+**Step 4: 实现工作日志记录**
 
 在处理过程中记录 thinking、tool_call、output 到数据库。
 
@@ -646,13 +920,57 @@ git commit -m "feat: 添加 ACP 客户端管理服务"
 - Modify: `backend/app/services/acp_client.py`
 - Modify: `backend/app/models/acp_session.py`
 
-**Step 1: Session 创建与复用**
+**Step 1: Session 创建与复用（含日志）**
 
 ```python
 async def get_or_create_session(self, feature_id: int, member_id: int, prompt: str) -> str:
     # 查询数据库中是否有可用 session
-    # 如果有，测试是否有效
-    # 如果无效或不存在，创建新 session
+    session = db.query(ACPSession).filter(
+        ACPSession.feature_id == feature_id,
+        ACPSession.member_id == member_id
+    ).first()
+    
+    if session:
+        logger.info(
+            "找到已有 session",
+            extra={
+                "feature_id": feature_id,
+                "member_id": member_id,
+                "session_id": session.session_id,
+            }
+        )
+        # 测试 session 是否有效
+        if await self._test_session(session.session_id):
+            logger.info(
+                "复用已有 session",
+                extra={
+                    "feature_id": feature_id,
+                    "member_id": member_id,
+                    "session_id": session.session_id,
+                }
+            )
+            return session.session_id
+        else:
+            logger.info(
+                "Session 已失效，创建新 session",
+                extra={
+                    "feature_id": feature_id,
+                    "member_id": member_id,
+                    "old_session_id": session.session_id,
+                }
+            )
+    
+    # 创建新 session
+    new_session_id = await self._create_session(prompt)
+    logger.info(
+        "创建新 session",
+        extra={
+            "feature_id": feature_id,
+            "member_id": member_id,
+            "new_session_id": new_session_id,
+        }
+    )
+    return new_session_id
 ```
 
 **Step 2: Session 持久化**
@@ -677,14 +995,23 @@ git commit -m "feat: 添加 Session 管理"
 **Files:**
 - Modify: `backend/app/services/acp_client.py`
 
-**Step 1: 实现消息队列**
+**Step 1: 实现消息队列（含日志）**
 
 ```python
 async def send_to_member(self, feature_id: int, member_id: int, message: str):
+    queue_size = self.queues[member_id].qsize()
     await self.queues[member_id].put({
         "feature_id": feature_id,
         "message": message
     })
+    logger.info(
+        "消息加入队列",
+        extra={
+            "feature_id": feature_id,
+            "member_id": member_id,
+            "queue_size_after": queue_size + 1,
+        }
+    )
 ```
 
 **Step 2: 实现消息处理**
@@ -795,14 +1122,58 @@ function ProjectList() {
 
 **Step 2: 创建新建项目页面**
 
-**Step 3: 创建 API 客户端**
+**Step 3: 创建 API 客户端（含 log_id 追溯）**
 
 ```ts
-const api = {
-  getProjects: () => fetch("/api/projects").then(r => r.json()),
-  createProject: (data: ProjectCreate) => 
-    fetch("/api/projects", { method: "POST", body: JSON.stringify(data) }).then(r => r.json()),
+interface ApiResponse<T> {
+  data: T;
+  log_id: string;
 }
+
+class ApiClient {
+  private requestLog: Array<{ url: string; method: string; log_id: string; timestamp: number }> = [];
+  
+  private async request<T>(url: string, options?: RequestInit): Promise<T & { log_id: string }> {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+      },
+    });
+    const log_id = response.headers.get("X-LogID") || "unknown";
+    const data = await response.json();
+    
+    // 记录请求日志，便于排查问题
+    this.requestLog.push({
+      url,
+      method: options?.method || "GET",
+      log_id,
+      timestamp: Date.now(),
+    });
+    
+    console.log(`[API] ${options?.method || "GET"} ${url}`, { log_id });
+    
+    return { ...data, log_id };
+  }
+  
+  getRequestLog() {
+    return this.requestLog;
+  }
+  
+  getProjects() {
+    return this.request<Project[]>("/api/projects");
+  }
+  
+  createProject(data: ProjectCreate) {
+    return this.request<Project>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+}
+
+export const api = new ApiClient();
 ```
 
 **Step 4: 测试**
