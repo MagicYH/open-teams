@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react"
 import { useParams, Link } from "react-router-dom"
 import { api } from "../api"
-import type { Feature, TeamMember } from "../types"
+import type { Feature, TeamMember, Project } from "../types"
 
 export default function ProjectDetail() {
     const { projectId } = useParams()
     const [features, setFeatures] = useState<Feature[]>([])
     const [members, setMembers] = useState<TeamMember[]>([])
+    const [project, setProject] = useState<Project | null>(null)
     const [newFeatureName, setNewFeatureName] = useState("")
     const [isCreating, setIsCreating] = useState(false)
     const [statusColor, setStatusColor] = useState("transparent")
@@ -14,12 +15,15 @@ export default function ProjectDetail() {
     const loadData = async () => {
         if (!projectId) return
         const id = parseInt(projectId)
-        const [feats, teamData] = await Promise.all([
+        const [feats, teamData, projs] = await Promise.all([
             api.getFeatures(id),
-            api.getTeam(id)
+            api.getTeam(id),
+            api.getProjects()
         ])
         setFeatures(feats)
         setMembers(teamData.members || [])
+        const p = projs.find(proj => proj.id === id)
+        if (p) setProject(p)
     }
 
     useEffect(() => {
@@ -47,7 +51,7 @@ export default function ProjectDetail() {
     return (
         <div style={{ padding: '40px', backgroundColor: 'var(--bg-main)', minHeight: '100vh', color: 'var(--text-primary)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px' }}>
-                <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 800 }}>Project detail #{projectId}</h1>
+                <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 800 }}>{project ? project.name : `Project detail #${projectId}`}</h1>
                 <Link to="/" style={{
                     color: 'var(--text-secondary)',
                     textDecoration: 'none',

@@ -4,6 +4,9 @@ from sqlalchemy.orm import Session
 from app.models.database import SessionLocal
 from app.models.feature import Feature
 from app.models.project import Project
+from app.models.message import Message
+from app.models.work_log import WorkLog
+from app.models.acp_session import ACPSession
 from app.schemas.feature import FeatureCreate, FeatureResponse
 from app.utils import get_log_id
 
@@ -54,6 +57,11 @@ def delete_feature(project_id: int, feature_id: int, request: Request, db: Sessi
     ).first()
     if not feature:
         raise HTTPException(status_code=404, detail="Feature not found")
+        
+    db.query(Message).filter(Message.feature_id == feature_id).delete()
+    db.query(WorkLog).filter(WorkLog.feature_id == feature_id).delete()
+    db.query(ACPSession).filter(ACPSession.feature_id == feature_id).delete()
+    
     db.delete(feature)
     db.commit()
     logger.info("删除 Feature", extra={

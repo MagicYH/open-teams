@@ -15,6 +15,8 @@ from app.models.acp_session import ACPSession
 from app.models.team import TeamMember
 from app.websocket import manager as ws_manager
 from app.schemas.message import MessageResponse
+from app.models.feature import Feature
+from app.models.project import Project
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -201,7 +203,9 @@ class ACPClientManager:
 
     async def get_or_create_session(self, feature_id: int, member_id: int, prompt: str) -> str:
         db = SessionLocal()
-        session = db.query(ACPSession).filter(ACPSession.feature_id == feature_id, ACPSession.member_id == member_id).first()
+        session = db.query(ACPSession).filter(
+            ACPSession.feature_id == feature_id, 
+            ACPSession.member_id == member_id).first()
         if session:
             db.close()
             return session.session_id
@@ -211,14 +215,23 @@ class ACPClientManager:
             db.close()
             raise Exception("Agent not connected")
 
-        from app.models.feature import Feature
-        from app.models.project import Project
         feature = db.query(Feature).filter(Feature.id == feature_id).first()
         project = db.query(Project).filter(Project.id == feature.project_id).first() if feature else None
         cwd = project.directory if project else "/tmp"
         
         resp = await client.connection.new_session(cwd=cwd)
         session_id = resp.session_id
+        
+        # Utilize prompt as initial instructions if provided
+        if prompt:
+            logger.info(f"Initializing session {session_id} for {self.get_member_name(member_id)} with prompt")
+            await client.connection.prompt(
+                prompt=[text_block(prompt)],
+                session_id=session_id
+            )
+            # Clear buffers to avoid initialization acknowledgment leaking into chat
+            client.thought_buffer = ""
+            client.reply_buffer = ""
         
         new_session = ACPSession(feature_id=feature_id, member_id=member_id, session_id=session_id)
         db.add(new_session)

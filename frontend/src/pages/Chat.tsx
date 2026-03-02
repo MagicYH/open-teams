@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react"
 import { useParams, Link } from "react-router-dom"
 import { api } from "../api"
-import type { Message, TeamMember } from "../types"
+import type { Message, TeamMember, Project, Feature } from "../types"
 import MessageList from "../components/MessageList"
 import MessageInput from "../components/MessageInput"
 import MemberWorkWindow from "../components/MemberWorkWindow"
@@ -11,6 +11,8 @@ export default function Chat() {
     const [messages, setMessages] = useState<Message[]>([])
     const [members, setMembers] = useState<TeamMember[]>([])
     const [activeMember, setActiveMember] = useState<TeamMember | null>(null)
+    const [project, setProject] = useState<Project | null>(null)
+    const [feature, setFeature] = useState<Feature | null>(null)
     const ws = useRef<WebSocket | null>(null)
 
     useEffect(() => {
@@ -25,6 +27,14 @@ export default function Chat() {
             if (teamMembers.length > 0 && !activeMember) {
                 setActiveMember(teamMembers[0])
             }
+        })
+        api.getProjects().then(projects => {
+            const p = projects.find(proj => proj.id === pid)
+            if (p) setProject(p)
+        })
+        api.getFeatures(pid).then(features => {
+            const f = features.find(feat => feat.id === id)
+            if (f) setFeature(f)
         })
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -55,40 +65,82 @@ export default function Chat() {
         <div style={{ display: 'flex', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: 'var(--bg-main)' }}>
             {/* 1. Left Sidebar (Navigation) */}
             <div style={{
-                width: '68px',
+                width: '240px',
                 backgroundColor: 'var(--bg-sidebar)',
                 borderRight: '1px solid var(--border-color)',
                 display: 'flex',
                 flexDirection: 'column',
-                alignItems: 'center',
-                padding: '24px 0',
+                padding: '24px',
                 gap: '24px'
             }}>
-                <div style={{
-                    width: '42px', height: '42px', borderRadius: '12px',
-                    backgroundColor: 'var(--color-developer)', color: 'white',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontWeight: 'bold', fontSize: '20px', marginBottom: '12px'
-                }}>
-                    T
-                </div>
-                {['D', 'C', 'F', 'A', 'S'].map(icon => (
-                    <div key={icon} style={{
-                        width: '42px', height: '42px', borderRadius: '50%',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        color: 'var(--text-secondary)', fontSize: '14px', cursor: 'pointer',
-                        border: '1px solid var(--border-color)',
-                        transition: 'all 0.2s'
-                    }}>
-                        {icon}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden' }}>
+                        <div style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {project?.name || 'Loading Project...'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" />
+                            </svg>
+                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={project?.directory || `/ projects / ${projectId}`}>
+                                {project?.directory || `/ projects / ${projectId}`}
+                            </span>
+                        </div>
                     </div>
-                ))}
-                <div style={{ flex: 1 }}></div>
-                <Link to={`/projects/${projectId}`} style={{ color: 'var(--text-muted)' }}>
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                    </svg>
-                </Link>
+                    <Link to={`/projects/${projectId}`} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        color: 'var(--text-muted)',
+                        textDecoration: 'none',
+                        fontSize: '12px',
+                        padding: '6px 10px',
+                        borderRadius: '6px',
+                        transition: 'background-color 0.2s',
+                        cursor: 'pointer',
+                        backgroundColor: 'var(--bg-panel)',
+                        border: '1px solid var(--border-color)',
+                        flexShrink: 0
+                    }}
+                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--border-color)'}
+                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'var(--bg-panel)'}
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+                        </svg>
+                        <span>Back</span>
+                    </Link>
+                </div>
+
+                <div style={{ flex: 1, overflowY: 'auto' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', textTransform: 'uppercase' }}>Team Status</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        {members.map(m => (
+                            <div
+                                key={m.id}
+                                onClick={() => setActiveMember(m)}
+                                style={{
+                                    padding: '12px',
+                                    borderRadius: '8px',
+                                    backgroundColor: activeMember?.id === m.id ? 'rgba(0, 122, 255, 0.1)' : 'var(--bg-panel)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '12px',
+                                    border: activeMember?.id === m.id ? '1px solid var(--accent-color)' : '1px solid var(--border-color)',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: m.color || '#333' }}></div>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontSize: '14px', fontWeight: 600 }}>{m.name}</div>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{activeMember?.id === m.id ? 'Active' : 'Idle'}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+
             </div>
 
             {/* 2. Main Chat Column */}
@@ -102,7 +154,7 @@ export default function Chat() {
                     gap: '4px'
                 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h2 style={{ fontSize: '18px', margin: 0, fontWeight: 700 }}>AI Core Team | Project Alpha</h2>
+                        <h2 style={{ fontSize: '18px', margin: 0, fontWeight: 700 }}>{feature?.name || 'Feature'} | {project?.name || 'Loading...'}</h2>
                         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                             <button style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', padding: '4px' }}>🔍</button>
                             <button style={{ backgroundColor: 'var(--accent-color)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '12px' }}>+ New Message</button>
@@ -166,31 +218,7 @@ export default function Chat() {
                         </div>
                     </div>
 
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', textTransform: 'uppercase' }}>Team Status</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        {members.map(m => (
-                            <div
-                                key={m.id}
-                                onClick={() => setActiveMember(m)}
-                                style={{
-                                    padding: '12px',
-                                    borderRadius: '8px',
-                                    backgroundColor: activeMember?.id === m.id ? 'rgba(0, 122, 255, 0.1)' : 'var(--bg-panel)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '12px',
-                                    border: activeMember?.id === m.id ? '1px solid var(--accent-color)' : '1px solid var(--border-color)',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: m.color || '#333' }}></div>
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ fontSize: '14px', fontWeight: 600 }}>{m.name}</div>
-                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{activeMember?.id === m.id ? 'Active' : 'Idle'}</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
+
                 </div>
             </div>
         </div>

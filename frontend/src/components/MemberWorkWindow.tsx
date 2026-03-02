@@ -36,6 +36,10 @@ export default function MemberWorkWindow({ member, featureId }: { member: TeamMe
                 </div>
             </div>
 
+            <div style={{ padding: '12px', backgroundColor: 'var(--bg-panel)', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '13px', lineHeight: '1.6', whiteSpace: 'pre-wrap', color: 'var(--text-secondary)' }}>
+                {member.prompt}
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {logs.length === 0 ? (
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0', backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
