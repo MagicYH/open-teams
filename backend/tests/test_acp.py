@@ -23,14 +23,21 @@ def test_opencode_acp_starts_server():
 
     # Start opencode acp
     log_file = "/tmp/opencode_test.log"
+    import os
+    from app.core.config import settings
+    
+    cwd = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app"))
+    cmd_parts = settings.acp_start_command.split()
+    cmd_parts.extend(["--port", str(test_port), "--print-logs"])
+    
     with open(log_file, "w") as f:
         process = subprocess.Popen(
-            ["opencode", "acp", "--port", str(test_port), "--print-logs"],
+            cmd_parts,
             stdin=subprocess.PIPE,
             stdout=f,
             stderr=f,
             text=True,
-            cwd="/Users/magic/Project/github/open-teams-back/backend/app"
+            cwd=cwd
         )
 
     try:

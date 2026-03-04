@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, ForeignKey
 from .database import Base
+from app.core.config import settings
 
 class Team(Base):
     __tablename__ = "teams"
@@ -17,5 +18,5 @@ class TeamMember(Base):
     color = Column(String, nullable=True)
     role = Column(String, nullable=False)
     prompt = Column(String, nullable=False)
-    acp_start_command = Column(String, default="opencode acp")
+    acp_start_command = Column(String, default=lambda: settings.acp_start_command)
     acp_process_id = Column(Integer, nullable=True)

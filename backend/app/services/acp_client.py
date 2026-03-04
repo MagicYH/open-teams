@@ -17,6 +17,7 @@ from app.websocket import manager as ws_manager
 from app.schemas.message import MessageResponse
 from app.models.feature import Feature
 from app.models.project import Project
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -96,28 +97,31 @@ class ACPClientManager:
         db.close()
         return member.id if member else None
 
-    async def start_client(self, member_id: int, member_name: str, command: str):
+    async def start_client(self, member_id: int, member_name: str, command: str | list[str], **kwargs):
         if member_id in self.clients:
             return
 
-        logger.info(f"Starting real ACP client for {member_name}")
+        logger.info(f"Starting real ACP client for {member_name} with command: {command}")
         client = TeamMemberClient(self, member_id)
         self.clients[member_id] = client
         self.queues[member_id] = asyncio.Queue()
-        self.tasks[member_id] = asyncio.create_task(self._manage_agent_lifecycle(member_id, member_name, command, client))
+        self.tasks[member_id] = asyncio.create_task(self._manage_agent_lifecycle(member_id, member_name, command, client, **kwargs))
 
-    async def _manage_agent_lifecycle(self, member_id: int, member_name: str, command: str, client: TeamMemberClient):
-        cmd_parts = command.split()
+    async def _manage_agent_lifecycle(self, member_id: int, member_name: str, command: str | list[str], client: TeamMemberClient, **kwargs):
+        if isinstance(command, str):
+            cmd_parts = command.split()
+        else:
+            cmd_parts = command
+            
         try:
             async with acp.spawn_agent_process(
                 client,
                 cmd_parts[0],
-                *cmd_parts[1:]
+                *cmd_parts[1:],
+                **kwargs
             ) as (connection, process):
-                logger.info(f"ACP connection established for {member_name}")
-                
                 # Initialize connection
-                await connection.initialize(protocol_version=1)
+                await connection.initialize(protocol_version=acp.PROTOCOL_VERSION)
                 logger.info(f"ACP connection initialized for {member_name}")
                 
                 # Start processing queue
@@ -242,7 +246,13 @@ class ACPClientManager:
     async def send_to_member(self, feature_id: int, member_id: int, message: str):
         if member_id not in self.clients:
             member_name = self.get_member_name(member_id)
-            await self.start_client(member_id, member_name, "opencode acp")
+            
+            db = SessionLocal()
+            member = db.query(TeamMember).filter(TeamMember.id == member_id).first()
+            command = member.acp_start_command if member and member.acp_start_command else settings.acp_start_command
+            db.close()
+            
+            await self.start_client(member_id, member_name, command)
             
         await self.queues[member_id].put({"feature_id": feature_id, "content": message})
 

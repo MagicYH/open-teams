@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import type { TeamMember, WorkLog } from "../types"
 import { api } from "../api"
 import WorkLogList from "./WorkLogList"
 
 export default function MemberWorkWindow({ member, featureId }: { member: TeamMember, featureId: number }) {
     const [logs, setLogs] = useState<WorkLog[]>([])
+    const endRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
         const fetchLogs = () => api.getWorkLogs(featureId, member.id).then(setLogs).catch(() => setLogs([]))
@@ -12,6 +13,11 @@ export default function MemberWorkWindow({ member, featureId }: { member: TeamMe
         const interval = setInterval(fetchLogs, 3000)
         return () => clearInterval(interval)
     }, [featureId, member.id])
+
+    const lastLogContent = logs[logs.length - 1]?.content || ""
+    useEffect(() => {
+        endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }, [logs.length, lastLogContent])
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -48,6 +54,7 @@ export default function MemberWorkWindow({ member, featureId }: { member: TeamMe
                 ) : (
                     <WorkLogList logs={logs} />
                 )}
+                <div ref={endRef} />
             </div>
         </div>
     )

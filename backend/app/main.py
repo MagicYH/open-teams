@@ -49,11 +49,15 @@ from starlette.requests import Request
 from starlette.responses import Response
 import uuid
 
+import os
+
 app = FastAPI(title="ACP Teams Backend")
+
+FRONTEND_PORT = os.getenv("FRONTEND_PORT", "5173")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[f"http://localhost:{FRONTEND_PORT}"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

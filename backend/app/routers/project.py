@@ -8,6 +8,7 @@ from app.utils import get_log_id
 import yaml
 from pathlib import Path
 from app.models.team import Team, TeamMember
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def create_default_team(db: Session, project_id: int):
             color=member.get("color"),
             role=member["role"],
             prompt=member["prompt"],
-            acp_start_command=member.get("acp_start_command", "opencode acp")
+            acp_start_command=member.get("acp_start_command", settings.acp_start_command)
         )
         db.add(db_member)
     db.commit()

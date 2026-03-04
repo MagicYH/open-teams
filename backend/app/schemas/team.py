@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from app.core.config import settings
 
 class TeamMemberCreate(BaseModel):
     name: str
@@ -6,7 +7,7 @@ class TeamMemberCreate(BaseModel):
     color: str | None = None
     role: str
     prompt: str
-    acp_start_command: str = "opencode acp"
+    acp_start_command: str = Field(default_factory=lambda: settings.acp_start_command)
 
 class TeamMemberUpdate(BaseModel):
     name: str | None = None
