@@ -1,12 +1,13 @@
 import { useEffect, useRef } from "react"
-import type { Message } from "../types"
+import type { Message, StreamingMessage, TeamMember } from "../types"
+import StreamingMessageNode from "./StreamingMessageNode"
 
-export default function MessageList({ messages, onMemberClick }: { messages: Message[], onMemberClick?: (name: string) => void }) {
+export default function MessageList({ messages, streaming = [], members = [], onMemberClick }: { messages: Message[], streaming?: StreamingMessage[], members?: TeamMember[], onMemberClick?: (name: string) => void }) {
     const endRef = useRef<HTMLDivElement>(null)
 
     useEffect(() => {
         endRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, [messages])
+    }, [messages, streaming])
 
     const getRoleColor = (senderName: string) => {
         const name = senderName.replace('@', '').toLowerCase();
@@ -94,6 +95,18 @@ export default function MessageList({ messages, onMemberClick }: { messages: Mes
                     </div>
                 )
             })}
+
+            {/* Render active streaming messages */}
+            {streaming.map((sMsg) => (
+                <StreamingMessageNode
+                    key={sMsg.streaming_id}
+                    message={sMsg}
+                    members={members}
+                    onMemberClick={onMemberClick}
+                    hideThoughtsAndTools={true}
+                />
+            ))}
+
             <div ref={endRef} />
         </div>
     )

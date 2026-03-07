@@ -26,6 +26,7 @@ class TeamMemberResponse(BaseModel):
     role: str
     prompt: str
     acp_start_command: str
+    status: str = "idle"
     
     class Config:
         from_attributes = True

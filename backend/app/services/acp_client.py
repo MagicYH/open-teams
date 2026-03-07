@@ -32,6 +32,7 @@ class TeamMemberClient(Client):
         self.connection: Optional[ClientSideConnection] = None
         self.reply_buffer = ""
         self.thought_buffer = ""
+        self.current_streaming_id: Optional[str] = None
 
     def on_connect(self, connection: ClientSideConnection):
         self.connection = connection
@@ -59,18 +60,110 @@ class TeamMemberClient(Client):
         if update.session_update == "agent_thought_chunk":
             content = update.content.text
             self.thought_buffer += content
+            if self.current_streaming_id:
+                asyncio.create_task(ws_manager.broadcast(feature_id, {
+                    "type": "stream_chunk",
+                    "member_id": self.member_id,
+                    "streaming_id": self.current_streaming_id,
+                    "chunk_type": "thought",
+                    "content": content
+                }))
         elif update.session_update == "agent_message_chunk":
             content = update.content.text
             self.reply_buffer += content
+            if self.current_streaming_id:
+                asyncio.create_task(ws_manager.broadcast(feature_id, {
+                    "type": "stream_chunk",
+                    "member_id": self.member_id,
+                    "streaming_id": self.current_streaming_id,
+                    "chunk_type": "message",
+                    "content": content
+                }))
         elif update.session_update == "tool_call":
-            content = f"Tool Call: {update.title} ({update.tool_call_id})"
-            self.thought_buffer += f"\n{content}\n"
+            title = getattr(update, 'title', 'Tool')
+            tool_call_id = getattr(update, 'tool_call_id', '')
+            raw_input = getattr(update, 'raw_input', None)
+
+            content = f"Tool Call: {title} ({tool_call_id})"
+            
+            if not hasattr(self, '_tool_args_buffer'):
+                self._tool_args_buffer = {}
+            if not hasattr(self, '_tool_name_buffer'):
+                self._tool_name_buffer = {}
+                
+            self._tool_args_buffer[tool_call_id] = raw_input
+            self._tool_name_buffer[tool_call_id] = title
+            
+            if raw_input:
+                import json
+                try:
+                    args_str = json.dumps(raw_input, ensure_ascii=False, indent=2)
+                    content += f"\nArguments:\n{args_str}"
+                except:
+                    content += f"\nArguments: {raw_input}"
+
+            if self.current_streaming_id:
+                asyncio.create_task(ws_manager.broadcast(feature_id, {
+                    "type": "stream_chunk",
+                    "member_id": self.member_id,
+                    "streaming_id": self.current_streaming_id,
+                    "chunk_type": "tool_call",
+                    "title": title,
+                    "tool_call_id": tool_call_id,
+                    "content": f"\n\n{content}"
+                }))
+        elif update.session_update == "tool_call_update":
+            tool_call_id = getattr(update, 'tool_call_id', '')
+            raw_output = getattr(update, 'raw_output', None)
+            
+            if raw_output:
+                content = f"Tool Call Result ({tool_call_id}):\n"
+                import json
+                try:
+                    res_str = json.dumps(raw_output, ensure_ascii=False, indent=2)
+                    content += res_str
+                except:
+                    res_str = str(raw_output)
+                    content += res_str
+                    
+                # Recover original input arguments from the buffer to save them persistently
+                args_data = getattr(self, '_tool_args_buffer', {}).pop(tool_call_id, None)
+                db_payload = {
+                    "tool_name": getattr(self, '_tool_name_buffer', {}).pop(tool_call_id, 'Tool'),
+                    "arguments": args_data,
+                    "result": raw_output
+                }
+                
+                try:
+                    db_content = json.dumps(db_payload, ensure_ascii=False)
+                except:
+                    db_content = content # Fallback to plain text if not serializable
+                
+                # Save structured JSON to DB so the UI can reconstruct both arguments & result
+                await self.manager.save_work_log(feature_id, self.member_id, "tool_call", db_content)
+
+                if self.current_streaming_id:
+                    asyncio.create_task(ws_manager.broadcast(feature_id, {
+                        "type": "stream_chunk",
+                        "member_id": self.member_id,
+                        "streaming_id": self.current_streaming_id,
+                        "chunk_type": "tool_call",
+                        "title": "Tool Result", # not used by UI frontend for updates
+                        "tool_call_id": tool_call_id,
+                        "content": f"\n\n{content}"
+                    }))
 
 class ACPClientManager:
     def __init__(self):
         self.clients: Dict[int, TeamMemberClient] = {}
         self.queues: Dict[int, asyncio.Queue] = {}
         self.tasks: Dict[int, asyncio.Task] = {}
+        self.working_members: Dict[int, bool] = {}
+
+    def get_member_status(self, member_id: int) -> str:
+        if member_id in self.working_members and self.working_members[member_id]:
+            return "working"
+        return "idle"
 
     def get_member_name(self, member_id: int) -> str:
         db = SessionLocal()
@@ -100,6 +193,12 @@ class ACPClientManager:
     async def start_client(self, member_id: int, member_name: str, command: str | list[str], **kwargs):
         if member_id in self.clients:
             return
+
+        # Clear stale sessions for this member as the new agent process won't recognize them.
+        db = SessionLocal()
+        db.query(ACPSession).filter(ACPSession.member_id == member_id).delete()
+        db.commit()
+        db.close()
 
         logger.info(f"Starting real ACP client for {member_name} with command: {command}")
         client = TeamMemberClient(self, member_id)
@@ -158,11 +257,33 @@ class ACPClientManager:
                 session_id = await self.get_or_create_session(feature_id, member_id, prompt_text)
                 
                 logger.info(f"Sending prompt to agent {member_name}: {content[:50]}")
-                # Send prompt to agent
-                await client.connection.prompt(
-                    prompt=[text_block(content)],
-                    session_id=session_id
-                )
+                
+                self.working_members[member_id] = True
+                client.current_streaming_id = str(uuid.uuid4())
+                await ws_manager.broadcast(feature_id, {
+                    "type": "agent_status",
+                    "member_id": member_id,
+                    "status": "working",
+                    "streaming_id": client.current_streaming_id
+                })
+                
+                try:
+                    # Send prompt to agent
+                    await client.connection.prompt(
+                        prompt=[text_block(content)],
+                        session_id=session_id
+                    )
+                finally:
+                    self.working_members[member_id] = False
+                    streaming_id_for_end = client.current_streaming_id
+                    client.current_streaming_id = None
+                    await ws_manager.broadcast(feature_id, {
+                        "type": "agent_status",
+                        "member_id": member_id,
+                        "status": "idle",
+                        "streaming_id": streaming_id_for_end
+                    })
+                
                 logger.info(f"Prompt sent to agent {member_name}")
                 
                 if client.thought_buffer:
@@ -170,6 +291,7 @@ class ACPClientManager:
                     client.thought_buffer = ""
                     
                 if client.reply_buffer:
+                    await self.save_work_log(feature_id, member_id, "output", client.reply_buffer)
                     await self.handle_member_message(feature_id, member_id, client.reply_buffer)
                     client.reply_buffer = ""
                 

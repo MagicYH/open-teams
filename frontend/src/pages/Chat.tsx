@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react"
 import { useParams, Link } from "react-router-dom"
 import { api } from "../api"
-import type { Message, TeamMember, Project, Feature } from "../types"
+import type { Message, TeamMember, Project, StreamingMessage, StreamChunk } from "../types"
 import MessageList from "../components/MessageList"
 import MessageInput from "../components/MessageInput"
 import MemberWorkWindow from "../components/MemberWorkWindow"
@@ -12,7 +12,7 @@ export default function Chat() {
     const [members, setMembers] = useState<TeamMember[]>([])
     const [activeMember, setActiveMember] = useState<TeamMember | null>(null)
     const [project, setProject] = useState<Project | null>(null)
-    const [feature, setFeature] = useState<Feature | null>(null)
+    const [streaming, setStreaming] = useState<Record<string, StreamingMessage>>({})
     const ws = useRef<WebSocket | null>(null)
 
     useEffect(() => {
@@ -32,15 +32,76 @@ export default function Chat() {
             const p = projects.find(proj => proj.id === pid)
             if (p) setProject(p)
         })
-        api.getFeatures(pid).then(features => {
-            const f = features.find(feat => feat.id === id)
-            if (f) setFeature(f)
-        })
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const socket = new WebSocket(`${protocol}//${window.location.host}/ws/chat/${id}`)
         socket.onmessage = (event) => {
             const newMsg = JSON.parse(event.data)
+            if (newMsg.type === 'agent_status') {
+                setMembers(prev => prev.map(m =>
+                    m.id === newMsg.member_id ? { ...m, status: newMsg.status } : m
+                ))
+                if (newMsg.status === 'idle' && newMsg.streaming_id) {
+                    setTimeout(() => {
+                        setStreaming(prev => {
+                            const copy = { ...prev }
+                            delete copy[newMsg.streaming_id]
+                            return copy
+                        })
+                    }, 3500)
+                }
+                return
+            }
+            if (newMsg.type === 'stream_chunk') {
+                const chunk = newMsg as StreamChunk;
+                console.log('Ingesting stream chunk:', chunk.chunk_type, chunk.tool_call_id);
+                setStreaming(prev => {
+                    const current = prev[chunk.streaming_id] || {
+                        member_id: chunk.member_id,
+                        streaming_id: chunk.streaming_id,
+                        blocks: []
+                    };
+                    const blocks = [...current.blocks];
+                    const lastBlock = blocks.length > 0 ? blocks[blocks.length - 1] : null;
+
+                    if (chunk.chunk_type === 'tool_call') {
+                        // Find if this tool_call_id already exists in any block
+                        const existingToolIdx = blocks.findIndex(b => b.type === 'tool_call' && b.tool_call_id === chunk.tool_call_id);
+                        if (existingToolIdx >= 0) {
+                            blocks[existingToolIdx] = {
+                                ...blocks[existingToolIdx],
+                                content: blocks[existingToolIdx].content + (chunk.content || '')
+                                // Importantly, do NOT overwrite the original title
+                            };
+                        } else {
+                            blocks.push({
+                                type: chunk.chunk_type,
+                                content: chunk.content || '',
+                                title: chunk.title,
+                                tool_call_id: chunk.tool_call_id
+                            });
+                        }
+                    } else if (lastBlock && lastBlock.type === chunk.chunk_type) {
+                        // For thoughts and messages, only group if they are contiguous
+                        blocks[blocks.length - 1] = {
+                            ...lastBlock,
+                            content: lastBlock.content + (chunk.content || '')
+                        };
+                    } else {
+                        blocks.push({
+                            type: chunk.chunk_type,
+                            content: chunk.content || '',
+                            title: chunk.title,
+                            tool_call_id: chunk.tool_call_id
+                        });
+                    }
+                    return {
+                        ...prev,
+                        [chunk.streaming_id]: { ...current, blocks }
+                    };
+                });
+                return;
+            }
             setMessages(prev => [...prev, newMsg])
         }
         ws.current = socket
@@ -130,10 +191,10 @@ export default function Chat() {
                                     cursor: 'pointer'
                                 }}
                             >
-                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: m.color || '#333' }}></div>
+                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: m.status === 'working' ? '#f59e0b' : '#10b981' }}></div>
                                 <div style={{ flex: 1 }}>
                                     <div style={{ fontSize: '14px', fontWeight: 600 }}>{m.name}</div>
-                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{activeMember?.id === m.id ? 'Active' : 'Idle'}</div>
+                                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{m.status === 'working' ? 'Working' : 'Idle'}</div>
                                 </div>
                             </div>
                         ))}
@@ -145,34 +206,13 @@ export default function Chat() {
 
             {/* 2. Main Chat Column */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-main)' }}>
-                {/* Header */}
-                <div style={{
-                    padding: '16px 24px',
-                    borderBottom: '1px solid var(--border-color)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '4px'
-                }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h2 style={{ fontSize: '18px', margin: 0, fontWeight: 700 }}>{feature?.name || 'Feature'} | {project?.name || 'Loading...'}</h2>
-                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                            <button style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', padding: '4px' }}>🔍</button>
-                            <button style={{ backgroundColor: 'var(--accent-color)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '6px', fontSize: '12px' }}>+ New Message</button>
-                        </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                        <span>Mentions: You,</span>
-                        {members.map(m => (
-                            <span key={m.id} style={{ color: `var(--color-${m.name.toLowerCase()})`, fontWeight: 500 }}>
-                                @{m.name}
-                            </span>
-                        ))}
-                    </div>
-                </div>
+                {/* Header removed */}
 
                 <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
                     <MessageList
                         messages={messages}
+                        streaming={Object.values(streaming)}
+                        members={members}
                         onMemberClick={(name) => {
                             const member = members.find(m => m.name.toLowerCase() === name.toLowerCase())
                             if (member) setActiveMember(member)
@@ -211,7 +251,11 @@ export default function Chat() {
                         <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px', textTransform: 'uppercase' }}>Current Output</div>
                         <div style={{ borderRadius: '12px', backgroundColor: 'var(--bg-panel)', border: '1px solid var(--border-color)', padding: '16px' }}>
                             {activeMember ? (
-                                <MemberWorkWindow member={activeMember} featureId={parseInt(featureId!)} />
+                                <MemberWorkWindow
+                                    member={activeMember}
+                                    featureId={parseInt(featureId!)}
+                                    streamingMessage={Object.values(streaming).find(s => s.member_id === activeMember.id)}
+                                />
                             ) : (
                                 <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' }}>No active agents</div>
                             )}

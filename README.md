@@ -19,9 +19,39 @@
 
 ### 前提条件
 
-- Python 3.12 或更高版本
-- Node.js & npm
-- Conda 环境
+- **后端**: Python 3.11 或更高版本 (推荐 3.12)
+- **前端**: Node.js v18.12 或更高版本 (推荐 v20.x LTS), npm v9.x 或更高版本
+- Conda 环境 (可选，推荐用于管理后端 Python 环境)
+
+### 环境搭建
+
+#### 1. 安装后端环境
+
+推荐使用 Conda 创建并管理后端的 Python 环境：
+
+```bash
+# 创建 Conda 环境
+conda create -n openteams python=3.12 -y
+
+# 激活 Conda 环境
+conda activate openteams
+
+# 进入后端目录并安装依赖
+cd backend
+pip install -e .
+```
+
+#### 2. 安装前端环境
+
+请确保系统已安装 Node.js。然后进入前端目录安装所需依赖：
+
+```bash
+# 进入前端目录
+cd frontend
+
+# 安装依赖
+npm install
+```
 
 ### 使用脚本启动
 

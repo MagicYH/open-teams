@@ -33,6 +33,7 @@ export interface TeamMember {
     role: string;
     prompt: string;
     acp_start_command: string;
+    status: string;
 }
 
 export interface Message {
@@ -51,4 +52,28 @@ export interface WorkLog {
     log_type: string;
     content: string;
     created_at: string;
+}
+
+export interface StreamChunk {
+    type: "stream_chunk";
+    member_id: number;
+    streaming_id: string;
+    chunk_type: "thought" | "message" | "tool_call";
+    content?: string;
+    title?: string;
+    tool_call_id?: string;
+}
+
+export interface StreamingBlock {
+    type: "thought" | "message" | "tool_call";
+    content: string;
+    title?: string;
+    tool_call_id?: string;
+    isFinished?: boolean;
+}
+
+export interface StreamingMessage {
+    member_id: number;
+    streaming_id: string;
+    blocks: StreamingBlock[];
 }

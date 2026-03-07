@@ -7,7 +7,7 @@ interface DirectoryPickerProps {
     onSelect: (path: string) => void;
 }
 
-export default function DirectoryPicker({ initialPath = '/', onSelect }: DirectoryPickerProps) {
+export default function DirectoryPicker({ initialPath = '~', onSelect }: DirectoryPickerProps) {
     const [currentPath, setCurrentPath] = useState(initialPath);
     const [items, setItems] = useState<DirectoryItem[]>([]);
     const [loading, setLoading] = useState(false);

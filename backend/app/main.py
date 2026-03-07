@@ -1,5 +1,6 @@
 import logging
 import sys
+import os
 from logging.handlers import TimedRotatingFileHandler
 from pythonjsonlogger import jsonlogger
 
@@ -15,10 +16,11 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
         }
 
 def setup_logging():
+    os.makedirs("logs", exist_ok=True)
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
-    # 控制台输出
+    # 控制台输出 (业务日志，重定向到 backend.log)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_formatter = logging.Formatter(
@@ -27,7 +29,7 @@ def setup_logging():
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
     
-    # 文件输出（JSON 格式，方便解析）
+    # 文件输出 (JSON 格式业务日志)
     file_handler = TimedRotatingFileHandler(
         "logs/app.log", when="midnight", interval=1
     )
@@ -37,6 +39,23 @@ def setup_logging():
     )
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
+    
+    # 将 HTTP 接口日志 (uvicorn.access) 从标准输出中分离，写入 access.log
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.handlers.clear()
+    access_logger.propagate = False
+    
+    access_handler = TimedRotatingFileHandler(
+        "logs/access.log", when="midnight", interval=1
+    )
+    access_handler.setLevel(logging.INFO)
+    
+    # 巧妙利用标准 Formatter：uvicorn 最后传入的 msg 和 args 会在 %(message)s 中自动被格式化
+    access_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    access_handler.setFormatter(access_formatter)
+    access_logger.addHandler(access_handler)
     
     return logger
 

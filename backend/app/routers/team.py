@@ -25,7 +25,15 @@ def get_team(project_id: int, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Team not found")
         
     members = db.query(TeamMember).filter(TeamMember.team_id == team.id).all()
-    return TeamResponse(id=team.id, project_id=team.project_id, members=members)
+    
+    from app.services.acp_client import acp_manager
+    member_responses = []
+    for m in members:
+        mr = TeamMemberResponse.model_validate(m)
+        mr.status = acp_manager.get_member_status(m.id)
+        member_responses.append(mr)
+        
+    return TeamResponse(id=team.id, project_id=team.project_id, members=member_responses)
 
 @router.post("/members", response_model=TeamMemberResponse)
 def create_member(project_id: int, member: TeamMemberCreate, request: Request, db: Session = Depends(get_db)):

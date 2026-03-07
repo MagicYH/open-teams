@@ -181,24 +181,22 @@ export default function MessageInput({ onSend, members }: { onSend: (content: st
                             onClick={handleSend}
                             disabled={!content.trim()}
                             style={{
-                                width: '32px',
-                                height: '32px',
+                                padding: '7px 16px',
                                 backgroundColor: content.trim() ? 'var(--accent-color)' : 'var(--text-muted)',
                                 color: 'white',
                                 border: 'none',
-                                borderRadius: '50%',
+                                borderRadius: '6px',
                                 cursor: content.trim() ? 'pointer' : 'not-allowed',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 transition: 'all 0.2s',
-                                marginBottom: '4px'
+                                marginBottom: '4px',
+                                fontWeight: 600,
+                                fontSize: '13px'
                             }}
                         >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                <line x1="22" y1="2" x2="11" y2="13"></line>
-                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                            </svg>
+                            Send
                         </button>
                     </div>
                 </div>
