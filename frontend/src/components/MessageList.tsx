@@ -82,9 +82,9 @@ export default function MessageList({ messages, streaming = [], members = [], on
                                 position: 'relative'
                             }}>
                                 <div style={{ whiteSpace: 'pre-wrap' }}>
-                                    {m.content.split(/(@\w+)/g).map((part, index) => {
+                                    {m.content.split(/(@(?:[\w\-]+|Test Engineer|Product Manager|User))/gi).map((part, index) => {
                                         if (part.startsWith('@')) {
-                                            const mentionName = part.replace('@', '').toLowerCase();
+                                            const mentionName = part.replace('@', '').toLowerCase().replace(/\s+/g, '-');
                                             return <span key={index} style={{ color: `var(--color-${mentionName})`, fontWeight: 600 }}>{part}</span>
                                         }
                                         return part;
@@ -97,7 +97,12 @@ export default function MessageList({ messages, streaming = [], members = [], on
             })}
 
             {/* Render active streaming messages */}
-            {streaming.map((sMsg) => (
+            {streaming.filter(sMsg => {
+                const member = members.find(m => m.id === sMsg.member_id);
+                // Hide the stream block in main chat IMMEDIATELY if member is idle,
+                // because the finalized message in `messages` is already rendering!
+                return member?.status === 'working';
+            }).map((sMsg) => (
                 <StreamingMessageNode
                     key={sMsg.streaming_id}
                     message={sMsg}

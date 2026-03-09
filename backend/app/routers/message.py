@@ -6,6 +6,8 @@ from app.models.message import Message
 from app.models.work_log import WorkLog
 from app.schemas.message import MessageCreate, MessageResponse, WorkLogResponse
 from app.utils import get_log_id
+from app.services.acp_client import acp_manager
+from app.websocket import manager as ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +26,6 @@ def get_messages(feature_id: int, request: Request, db: Session = Depends(get_db
     messages = db.query(Message).filter(Message.feature_id == feature_id).all()
     logger.debug("获取群聊消息", extra={"log_id": log_id, "feature_id": feature_id, "count": len(messages)})
     return messages
-
-from app.services.acp_client import acp_manager
-from app.websocket import manager as ws_manager
 
 @router.post("/messages", response_model=MessageResponse)
 async def create_message(feature_id: int, message: MessageCreate, request: Request, db: Session = Depends(get_db)):
@@ -51,7 +50,9 @@ async def create_message(feature_id: int, message: MessageCreate, request: Reque
     
     for mention in message.mentions:
         member_id = acp_manager.get_member_id_by_name(mention, feature_id)
+        logger.info(f"Resolved mention '{mention}' to member_id: {member_id} for feature_id: {feature_id}")
         if member_id:
+            logger.info(f"Triggering start for member_id: {member_id}")
             await acp_manager.send_to_member(feature_id, member_id, message.content)
             
     return db_message

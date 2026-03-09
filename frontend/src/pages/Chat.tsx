@@ -240,9 +240,6 @@ export default function Chat() {
             }}>
                 <div style={{ padding: '20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600 }}>Work Window</h3>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                        <div style={{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#1e40af', color: 'white', fontSize: '10px', fontWeight: 600 }}>THINKING</div>
-                    </div>
                 </div>
 
                 <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>

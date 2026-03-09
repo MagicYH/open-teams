@@ -83,6 +83,26 @@ class ApiClient {
         return this.request<{ id: number, project_id: number, members: TeamMember[] }>(`/api/projects/${projectId}/team`);
     }
 
+    createMember(projectId: number, data: { name: string; role: string; prompt: string; acp_start_command: string }) {
+        return this.request<TeamMember>(`/api/projects/${projectId}/team/members`, {
+            method: "POST",
+            body: JSON.stringify(data),
+        });
+    }
+
+    updateMember(projectId: number, memberId: number, data: Partial<{ name: string; role: string; prompt: string; acp_start_command: string }>) {
+        return this.request<TeamMember>(`/api/projects/${projectId}/team/members/${memberId}`, {
+            method: "PUT",
+            body: JSON.stringify(data),
+        });
+    }
+
+    deleteMember(projectId: number, memberId: number) {
+        return this.request<{ status: string }>(`/api/projects/${projectId}/team/members/${memberId}`, {
+            method: "DELETE",
+        });
+    }
+
     getMessages(featureId: number) {
         return this.request<Message[]>(`/api/features/${featureId}/messages`);
     }

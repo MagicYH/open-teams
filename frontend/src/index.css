@@ -17,9 +17,11 @@
 
   /* Role Colors */
   --color-pm: #ff9500;
+  --color-product-manager: #ff9500;
   --color-architect: #34c759;
   --color-developer: #007aff;
   --color-qa: #af52de;
+  --color-test-engineer: #af52de;
   --color-user: #ffffff;
 
   --accent-color: #007aff;

@@ -19,7 +19,8 @@ export default function MessageInput({ onSend, members }: { onSend: (content: st
         : []
 
     const parseMentions = (text: string) => {
-        const matches = text.match(/@\w+/g)
+        // Support standard roles, hyphenated roles, and specific spaced roles mapped in yaml settings
+        const matches = text.match(/@(?:[\w\-]+|Test Engineer|Product Manager|User)/gi)
         return matches ? Array.from(new Set(matches.map(m => m.substring(1)))) : []
     }
 

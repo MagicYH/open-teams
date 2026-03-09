@@ -8,6 +8,10 @@ from app.utils import get_log_id
 import yaml
 from pathlib import Path
 from app.models.team import Team, TeamMember
+from app.models.feature import Feature
+from app.models.message import Message
+from app.models.work_log import WorkLog
+from app.models.acp_session import ACPSession
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -97,6 +101,25 @@ def delete_project(project_id: int, request: Request, db: Session = Depends(get_
         logger.warning("删除项目，项目不存在", extra={"log_id": log_id, "project_id": project_id})
         raise HTTPException(status_code=404, detail="Project not found")
     logger.info("删除项目", extra={"log_id": log_id, "project_id": project_id})
+
+    # Gather related IDs for cascade deletion
+    feature_ids = [f.id for f in db.query(Feature.id).filter(Feature.project_id == project_id).all()]
+    team = db.query(Team).filter(Team.project_id == project_id).first()
+    team_member_ids = []
+    if team:
+        team_member_ids = [m.id for m in db.query(TeamMember.id).filter(TeamMember.team_id == team.id).all()]
+
+    # Delete in dependency order
+    if feature_ids:
+        db.query(ACPSession).filter(ACPSession.feature_id.in_(feature_ids)).delete(synchronize_session=False)
+        db.query(WorkLog).filter(WorkLog.feature_id.in_(feature_ids)).delete(synchronize_session=False)
+        db.query(Message).filter(Message.feature_id.in_(feature_ids)).delete(synchronize_session=False)
+        db.query(Feature).filter(Feature.project_id == project_id).delete(synchronize_session=False)
+
+    if team:
+        db.query(TeamMember).filter(TeamMember.team_id == team.id).delete(synchronize_session=False)
+        db.delete(team)
+
     db.delete(project)
     db.commit()
     return {"status": "deleted", "log_id": log_id}
