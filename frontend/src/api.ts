@@ -128,6 +128,13 @@ class ApiClient {
             body: JSON.stringify({ path, name }),
         });
     }
+
+    generatePrompt(role: string, existingPrompt: string, userRequirement: string, teamMembers: { name: string; role: string }[] = []) {
+        return this.request<{ prompt: string }>("/api/utils/generate-prompt", {
+            method: "POST",
+            body: JSON.stringify({ role, existing_prompt: existingPrompt, user_requirement: userRequirement, team_members: teamMembers }),
+        });
+    }
 }
 
 export const api = new ApiClient();

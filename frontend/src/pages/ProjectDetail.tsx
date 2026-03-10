@@ -17,11 +17,12 @@ const EMPTY_FORM: MemberForm = { name: "", acp_start_command: "", role: "", prom
 interface MemberModalProps {
     projectId: number
     member: TeamMember | null   // null = create mode
+    members: TeamMember[]       // all current team members (for context)
     onClose: () => void
     onSaved: () => void
 }
 
-function MemberModal({ projectId, member, onClose, onSaved }: MemberModalProps) {
+function MemberModal({ projectId, member, members, onClose, onSaved }: MemberModalProps) {
     const [form, setForm] = useState<MemberForm>(
         member
             ? { name: member.name, acp_start_command: member.acp_start_command, role: member.role, prompt: member.prompt }
@@ -29,6 +30,35 @@ function MemberModal({ projectId, member, onClose, onSaved }: MemberModalProps) 
     )
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState("")
+
+    // ─── Prompt-generation sub-modal state ────────────────────────────
+    const [genOpen, setGenOpen] = useState(false)
+    const [genRequirement, setGenRequirement] = useState("")
+    const [genLoading, setGenLoading] = useState(false)
+    const [genError, setGenError] = useState("")
+
+    const handleGenerate = async () => {
+        if (!form.role.trim()) {
+            setGenError("Please fill in the Role field first.")
+            return
+        }
+        setGenLoading(true)
+        setGenError("")
+        try {
+            // Exclude the member being edited from the list passed as context
+            const otherMembers = members
+                .filter(m => !member || m.id !== member.id)
+                .map(m => ({ name: m.name, role: m.role }))
+            const result = await api.generatePrompt(form.role, form.prompt, genRequirement, otherMembers)
+            setForm(f => ({ ...f, prompt: result.prompt }))
+            setGenOpen(false)
+            setGenRequirement("")
+        } catch (err: any) {
+            setGenError(err.message || "Generation failed.")
+        } finally {
+            setGenLoading(false)
+        }
+    }
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -144,7 +174,27 @@ function MemberModal({ projectId, member, onClose, onSaved }: MemberModalProps) 
                     </div>
 
                     <div>
-                        <label style={labelStyle}>System Prompt</label>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                            <label style={{ ...labelStyle, marginBottom: 0 }}>System Prompt</label>
+                            <button
+                                type="button"
+                                onClick={() => { setGenError(""); setGenOpen(true) }}
+                                disabled={saving}
+                                style={{
+                                    display: "flex", alignItems: "center", gap: "4px",
+                                    padding: "4px 10px",
+                                    background: "linear-gradient(135deg, #7c3aed, #4f46e5)",
+                                    border: "none", borderRadius: "6px",
+                                    color: "#fff", fontSize: "12px", fontWeight: 600,
+                                    cursor: saving ? "not-allowed" : "pointer",
+                                    opacity: saving ? 0.6 : 1,
+                                    letterSpacing: "0.3px",
+                                    transition: "opacity 0.2s",
+                                }}
+                            >
+                                ✨ Generate
+                            </button>
+                        </div>
                         <textarea
                             style={{ ...inputStyle, minHeight: "120px", resize: "vertical", lineHeight: "1.5" }}
                             value={form.prompt}
@@ -153,6 +203,142 @@ function MemberModal({ projectId, member, onClose, onSaved }: MemberModalProps) 
                             disabled={saving}
                         />
                     </div>
+
+                    {/* ─── Prompt-generation sub-modal ─── */}
+                    {genOpen && (
+                        <div
+                            style={{
+                                position: "fixed", inset: 0,
+                                backgroundColor: "rgba(0,0,0,0.7)",
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                zIndex: 1100,
+                            }}
+                            onClick={e => { if (!genLoading && e.target === e.currentTarget) { setGenOpen(false); setGenRequirement("") } }}
+                        >
+                            <div style={{
+                                backgroundColor: "var(--bg-panel)",
+                                border: "1px solid var(--border-color)",
+                                borderRadius: "14px",
+                                padding: "28px",
+                                width: "460px",
+                                maxWidth: "90vw",
+                                boxShadow: "0 24px 60px rgba(0,0,0,0.6)",
+                            }}>
+                                {/* Header */}
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+                                    <div>
+                                        <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>✨ Generate System Prompt</h3>
+                                        <p style={{ margin: "4px 0 0", fontSize: "12px", color: "var(--text-muted)" }}>
+                                            Role: <strong style={{ color: "var(--text-secondary)" }}>{form.role || "(not set)"}</strong>
+                                        </p>
+                                    </div>
+                                    <button
+                                        onClick={() => { if (!genLoading) { setGenOpen(false); setGenRequirement("") } }}
+                                        disabled={genLoading}
+                                        style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: "18px", lineHeight: 1 }}
+                                    >✕</button>
+                                </div>
+
+                                {/* Requirements textarea */}
+                                <div style={{ marginBottom: "16px" }}>
+                                    <label style={{ ...labelStyle, marginBottom: "6px" }}>Additional Requirements <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(optional)</span></label>
+                                    <textarea
+                                        style={{ ...inputStyle, minHeight: "80px", resize: "vertical", lineHeight: "1.5", opacity: genLoading ? 0.6 : 1 }}
+                                        value={genRequirement}
+                                        onChange={e => setGenRequirement(e.target.value)}
+                                        placeholder="e.g. Focus on React and TypeScript, write concise code..."
+                                        disabled={genLoading}
+                                        autoFocus
+                                    />
+                                </div>
+
+                                {/* Team members context */}
+                                {members.filter(m => !member || m.id !== member.id).length > 0 && (
+                                    <div style={{ marginBottom: "16px" }}>
+                                        <label style={{ ...labelStyle, marginBottom: "6px" }}>Team Context (auto-included)</label>
+                                        <div style={{
+                                            backgroundColor: "var(--bg-main)",
+                                            border: "1px solid var(--border-color)",
+                                            borderRadius: "8px",
+                                            padding: "10px 12px",
+                                            display: "flex", flexDirection: "column", gap: "6px",
+                                        }}>
+                                            {members
+                                                .filter(m => !member || m.id !== member.id)
+                                                .map(m => (
+                                                    <div key={m.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+                                                        <span style={{
+                                                            display: "inline-block", width: "22px", height: "22px",
+                                                            borderRadius: "6px",
+                                                            backgroundColor: `var(--color-${m.name.toLowerCase()})`,
+                                                            color: "white", fontWeight: 800, fontSize: "11px",
+                                                            textAlign: "center", lineHeight: "22px", flexShrink: 0,
+                                                        }}>{m.name.charAt(0)}</span>
+                                                        <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>@{m.name}</span>
+                                                        <span style={{ color: "var(--text-muted)" }}>—</span>
+                                                        <span style={{ color: "var(--text-secondary)" }}>{m.role}</span>
+                                                    </div>
+                                                ))
+                                            }
+                                        </div>
+                                    </div>
+                                )}
+
+                                {genError && (
+                                    <div style={{ color: "#ff453a", fontSize: "13px", backgroundColor: "rgba(255,69,58,0.1)", padding: "8px 12px", borderRadius: "7px", marginBottom: "14px" }}>
+                                        {genError}
+                                    </div>
+                                )}
+
+                                <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setGenOpen(false); setGenRequirement("") }}
+                                        disabled={genLoading}
+                                        style={{
+                                            padding: "9px 18px",
+                                            backgroundColor: "transparent",
+                                            border: "1px solid var(--border-color)",
+                                            borderRadius: "8px",
+                                            color: "var(--text-secondary)",
+                                            cursor: genLoading ? "not-allowed" : "pointer",
+                                            fontWeight: 600, fontSize: "14px", opacity: genLoading ? 0.6 : 1,
+                                        }}
+                                    >Cancel</button>
+                                    <button
+                                        type="button"
+                                        onClick={handleGenerate}
+                                        disabled={genLoading}
+                                        style={{
+                                            padding: "9px 20px",
+                                            background: genLoading
+                                                ? "var(--border-color)"
+                                                : "linear-gradient(135deg, #7c3aed, #4f46e5)",
+                                            border: "none", borderRadius: "8px",
+                                            color: "white",
+                                            cursor: genLoading ? "not-allowed" : "pointer",
+                                            fontWeight: 600, fontSize: "14px",
+                                            display: "flex", alignItems: "center", gap: "6px",
+                                            transition: "background 0.2s",
+                                        }}
+                                    >
+                                        {genLoading ? (
+                                            <>
+                                                <span style={{
+                                                    display: "inline-block", width: "12px", height: "12px",
+                                                    border: "2px solid rgba(255,255,255,0.3)",
+                                                    borderTopColor: "white",
+                                                    borderRadius: "50%",
+                                                    animation: "spin 0.7s linear infinite",
+                                                }} />
+                                                Generating…
+                                            </>
+                                        ) : "✨ Generate"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {error && (
                         <div style={{ color: "#ff453a", fontSize: "13px", backgroundColor: "rgba(255,69,58,0.1)", padding: "10px 14px", borderRadius: "8px" }}>
@@ -513,6 +699,7 @@ export default function ProjectDetail() {
                 <MemberModal
                     projectId={parseInt(projectId)}
                     member={editingMember}
+                    members={members}
                     onClose={() => setModalOpen(false)}
                     onSaved={loadData}
                 />

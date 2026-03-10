@@ -34,9 +34,11 @@ class TeamMemberClient(Client):
         self.connection: Optional[ClientSideConnection] = None
         self.reply_buffer = ""
         self.thought_buffer = ""
-        self.current_streaming_id: Optional[str] = None
+        self.current_streaming_id: str = str(uuid.uuid4())
         self._tool_args_buffer: dict = {}
         self._tool_name_buffer: dict = {}
+        self.agent_capabilities = None
+        self.is_replaying: bool = False
 
     def on_connect(self, connection: ClientSideConnection):
         logger.info(f"[member_id={self.member_id}] on_connect called — ACP connection is ready")
@@ -78,6 +80,9 @@ class TeamMemberClient(Client):
 
     async def session_update(self, session_id: str, update: Any, **kwargs):
         update_type = getattr(update, 'session_update', 'UNKNOWN')
+        if self.is_replaying:
+            logger.debug(f"[member_id={self.member_id}] [replaying] skipping broadcast for {update_type}")
+            return
         logger.debug(f"[member_id={self.member_id}] session_update received: {update_type}")
 
         # Find feature_id from session_id
@@ -94,31 +99,25 @@ class TeamMemberClient(Client):
             content = update.content.text
             self.thought_buffer += content
             logger.debug(f"[member_id={self.member_id}] thought_chunk ({len(content)} chars), streaming_id={self.current_streaming_id}")
-            if self.current_streaming_id:
-                asyncio.create_task(ws_manager.broadcast(feature_id, {
-                    "type": "stream_chunk",
-                    "member_id": self.member_id,
-                    "streaming_id": self.current_streaming_id,
-                    "chunk_type": "thought",
-                    "content": content
-                }))
-            else:
-                logger.warning(f"[member_id={self.member_id}] thought_chunk received but current_streaming_id is None — not broadcasting")
+            asyncio.create_task(ws_manager.broadcast(feature_id, {
+                "type": "stream_chunk",
+                "member_id": self.member_id,
+                "streaming_id": self.current_streaming_id,
+                "chunk_type": "thought",
+                "content": content
+            }))
 
         elif update_type == "agent_message_chunk":
             content = update.content.text
             self.reply_buffer += content
             logger.debug(f"[member_id={self.member_id}] message_chunk ({len(content)} chars), streaming_id={self.current_streaming_id}")
-            if self.current_streaming_id:
-                asyncio.create_task(ws_manager.broadcast(feature_id, {
-                    "type": "stream_chunk",
-                    "member_id": self.member_id,
-                    "streaming_id": self.current_streaming_id,
-                    "chunk_type": "message",
-                    "content": content
-                }))
-            else:
-                logger.warning(f"[member_id={self.member_id}] message_chunk received but current_streaming_id is None — not broadcasting")
+            asyncio.create_task(ws_manager.broadcast(feature_id, {
+                "type": "stream_chunk",
+                "member_id": self.member_id,
+                "streaming_id": self.current_streaming_id,
+                "chunk_type": "message",
+                "content": content
+            }))
 
         elif update_type == "tool_call":
             title = getattr(update, 'title', 'Tool')
@@ -202,6 +201,7 @@ class ACPClientManager:
         self.working_members: Dict[int, bool] = {}
         # Event to signal when a client's connection is ready
         self._connection_ready: Dict[int, asyncio.Event] = {}
+        self._established_sessions: set[tuple[int, int]] = set()  # (member_id, feature_id)
 
     def get_member_status(self, member_id: int) -> str:
         if member_id in self.working_members and self.working_members[member_id]:
@@ -259,12 +259,6 @@ class ACPClientManager:
             logger.info(f"start_client: member_id={member_id} already has a client, skipping")
             return
 
-        # Clear stale sessions for this member as the new agent process won't recognize them.
-        db = SessionLocal()
-        db.query(ACPSession).filter(ACPSession.member_id == member_id).delete()
-        db.commit()
-        db.close()
-
         logger.info(f"Starting real ACP client for {member_name} with command: {command}")
         client = TeamMemberClient(self, member_id)
         self.clients[member_id] = client
@@ -288,8 +282,9 @@ class ACPClientManager:
                 **kwargs
             ) as (connection, process):
                 # Initialize connection
-                await connection.initialize(protocol_version=acp.PROTOCOL_VERSION)
-                logger.info(f"ACP connection initialized for {member_name}")
+                init_resp = await connection.initialize(protocol_version=acp.PROTOCOL_VERSION)
+                client.agent_capabilities = init_resp.agent_capabilities
+                logger.info(f"ACP connection initialized for {member_name}, loadSession={getattr(client.agent_capabilities, 'load_session', False)}")
 
                 # Signal to waiting queue processor that connection is ready
                 if member_id in self._connection_ready:
@@ -359,11 +354,15 @@ class ACPClientManager:
                     logger.info(f"[member_id={member_id}] client.connection.prompt() returned — agent finished responding")
                 except Exception as prompt_err:
                     logger.error(f"[member_id={member_id}] Error during prompt(): {prompt_err}", exc_info=True)
+                    # Discard established session on error so we try to load/recreate it next time
+                    self._established_sessions.discard((member_id, feature_id))
                 finally:
                     self.working_members[member_id] = False
                     streaming_id_for_end = client.current_streaming_id
-                    client.current_streaming_id = None
-                    logger.info(f"[member_id={member_id}] Set working=False, broadcasting idle status")
+                    # Rotate to a fresh ID immediately so any late-arriving chunks
+                    # from the agent are associated with the new cycle, not None.
+                    client.current_streaming_id = str(uuid.uuid4())
+                    logger.info(f"[member_id={member_id}] Set working=False, broadcasting idle status, next streaming_id={client.current_streaming_id}")
                     await ws_manager.broadcast(feature_id, {
                         "type": "agent_status",
                         "member_id": member_id,
@@ -421,25 +420,66 @@ class ACPClientManager:
         db.close()
 
     async def get_or_create_session(self, feature_id: int, member_id: int) -> tuple[str, bool]:
+        key = (member_id, feature_id)
         db = SessionLocal()
         session = db.query(ACPSession).filter(
             ACPSession.feature_id == feature_id,
             ACPSession.member_id == member_id).first()
-        if session:
-            db.close()
-            logger.debug(f"get_or_create_session: reusing existing session {session.session_id}")
-            return session.session_id, False
 
         client = self.clients.get(member_id)
         if not client or not client.connection:
             db.close()
             raise Exception(f"Agent not connected for member_id={member_id}")
 
+        # Case 1: Session established in this process lifetime
+        if session and key in self._established_sessions:
+            db.close()
+            logger.debug(f"get_or_create_session: reusing established session {session.session_id}")
+            return session.session_id, False
+
+        # Case 2: Session exists in DB but not established in this process (e.g. after restart)
+        if session:
+            feature = db.query(Feature).filter(Feature.id == feature_id).first()
+            project = db.query(Project).filter(Project.id == feature.project_id).first() if feature else None
+            cwd = project.directory if project else "/tmp"
+
+            supports_load = (
+                client.agent_capabilities is not None and
+                getattr(client.agent_capabilities, 'load_session', False)
+            )
+
+            if supports_load:
+                try:
+                    client.is_replaying = True
+                    logger.info(f"[member_id={member_id}] Attempting to load session {session.session_id}")
+                    await client.connection.load_session(cwd=cwd, session_id=session.session_id)
+                    client.is_replaying = False
+                    self._established_sessions.add(key)
+                    db.close()
+                    logger.info(f"Session {session.session_id} loaded successfully for member_id={member_id}")
+                    return session.session_id, False
+                except Exception as e:
+                    client.is_replaying = False
+                    logger.warning(f"load_session failed for {session.session_id}: {e} — falling back to new session")
+                    db.query(ACPSession).filter(
+                        ACPSession.feature_id == feature_id,
+                        ACPSession.member_id == member_id
+                    ).delete()
+                    db.commit()
+            else:
+                logger.info(f"Agent (member_id={member_id}) does not support loadSession — creating new session")
+                db.query(ACPSession).filter(
+                    ACPSession.feature_id == feature_id,
+                    ACPSession.member_id == member_id
+                ).delete()
+                db.commit()
+
+        # Case 3: No session exists or load failed
         feature = db.query(Feature).filter(Feature.id == feature_id).first()
         project = db.query(Project).filter(Project.id == feature.project_id).first() if feature else None
         cwd = project.directory if project else "/tmp"
-        logger.info(f"get_or_create_session: creating new session for member_id={member_id}, cwd={cwd}")
 
+        logger.info(f"get_or_create_session: creating new session for member_id={member_id}, cwd={cwd}")
         resp = await client.connection.new_session(cwd=cwd)
         session_id = resp.session_id
         logger.info(f"get_or_create_session: new session_id={session_id}")
@@ -448,6 +488,7 @@ class ACPClientManager:
         db.add(new_session)
         db.commit()
         db.close()
+        self._established_sessions.add(key)
         return session_id, True
 
     async def send_to_member(self, feature_id: int, member_id: int, message: str):
