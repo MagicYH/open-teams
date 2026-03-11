@@ -482,7 +482,8 @@ class ACPClientManager:
         logger.info(f"get_or_create_session: creating new session for member_id={member_id}, cwd={cwd}")
         resp = await client.connection.new_session(cwd=cwd)
         session_id = resp.session_id
-        logger.info(f"get_or_create_session: new session_id={session_id}")
+        capabilities = getattr(resp, 'agent_capabilities', getattr(resp, 'capabilities', None))
+        logger.info(f"get_or_create_session: new session_id={session_id}, supported capabilities: {capabilities}")
 
         new_session = ACPSession(feature_id=feature_id, member_id=member_id, session_id=session_id)
         db.add(new_session)

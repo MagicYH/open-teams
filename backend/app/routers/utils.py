@@ -140,6 +140,8 @@ async def generate_prompt(req: GeneratePromptRequest):
             # Create a temporary session (cwd doesn't matter for prompt generation)
             resp = await connection.new_session(cwd="/tmp")
             session_id = resp.session_id
+            capabilities = getattr(resp, 'agent_capabilities', getattr(resp, 'capabilities', None))
+            logger.info(f"generate_prompt: new session_id={session_id}, supported capabilities: {capabilities}")
 
             # Send the request and wait for reply (timeout: 60 s)
             await connection.prompt(
