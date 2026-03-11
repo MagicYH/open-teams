@@ -19,11 +19,9 @@ def list_directories(path: str = Query("/", description="The path to list direct
     try:
         target_path = Path(path).expanduser().resolve()
         if not target_path.exists():
-            # If path doesn't exist, try to start from user home or root
-            target_path = Path.home()
-        
+            raise HTTPException(status_code=404, detail=f"Directory '{target_path}' does not exist")
         if not target_path.is_dir():
-            raise HTTPException(status_code=400, detail="Path is not a directory")
+            raise HTTPException(status_code=400, detail=f"'{target_path}' is not a directory")
 
         items = []
         # Add parent directory if not at root
@@ -52,11 +50,15 @@ def list_directories(path: str = Query("/", description="The path to list direct
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class CreateDirRequest(BaseModel):
+    path: str
+    name: str
+
 @router.post("/create-directory")
-def create_directory(path: str, name: str):
+def create_directory(req: CreateDirRequest):
     try:
-        base_path = Path(path).expanduser().resolve()
-        new_dir = base_path / name
+        base_path = Path(req.path).expanduser().resolve()
+        new_dir = base_path / req.name
         
         if new_dir.exists():
             raise HTTPException(status_code=400, detail="Directory already exists")

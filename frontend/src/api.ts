@@ -22,7 +22,13 @@ class ApiClient {
         }
 
         if (!response.ok) {
-            throw new Error(data.detail || "API request failed");
+            let errorMsg = "API request failed";
+            if (data.detail) {
+                errorMsg = typeof data.detail === 'string'
+                    ? data.detail
+                    : JSON.stringify(data.detail);
+            }
+            throw new Error(errorMsg);
         }
 
         this.requestLog.push({

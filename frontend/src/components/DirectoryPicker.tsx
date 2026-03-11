@@ -9,29 +9,37 @@ interface DirectoryPickerProps {
 
 export default function DirectoryPicker({ initialPath = '~', onSelect }: DirectoryPickerProps) {
     const [currentPath, setCurrentPath] = useState(initialPath);
+    const [inputPath, setInputPath] = useState(initialPath);
     const [items, setItems] = useState<DirectoryItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [newDirName, setNewDirName] = useState('');
     const [showNewDirInput, setShowNewDirInput] = useState(false);
 
-    const loadDirectories = async (path: string) => {
+    const loadDirectories = async (path: string, isInitialLoad = false) => {
         setLoading(true);
         setError(null);
         try {
             const res = await api.listDirectories(path);
             setCurrentPath(res.current_path);
+            setInputPath(res.current_path);
             setItems(res.items);
             onSelect(res.current_path);
         } catch (err: any) {
-            setError(err.message || 'Failed to load directories');
+            const errMsg = err.message || 'Failed to load directories';
+            if (isInitialLoad && path !== '/home') {
+                console.warn(`Initial path ${path} failed, falling back to /home. Error: ${errMsg}`);
+                return loadDirectories('/home', true);
+            } else {
+                setError(errMsg);
+            }
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        loadDirectories(initialPath);
+        loadDirectories(initialPath, true);
     }, []);
 
     const handleItemClick = (item: DirectoryItem) => {
@@ -64,11 +72,48 @@ export default function DirectoryPicker({ initialPath = '~', onSelect }: Directo
                 padding: '8px 12px',
                 backgroundColor: 'var(--bg-panel)',
                 borderBottom: '1px solid var(--border-color)',
-                fontSize: '12px',
+                fontSize: '13px',
                 color: 'var(--text-secondary)',
-                wordBreak: 'break-all'
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
             }}>
-                Current: {currentPath}
+                <span style={{ fontWeight: 600 }}>Path:</span>
+                <input
+                    value={inputPath}
+                    onChange={e => setInputPath(e.target.value)}
+                    onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            loadDirectories(inputPath);
+                        }
+                    }}
+                    style={{
+                        flex: 1,
+                        padding: '4px 8px',
+                        backgroundColor: 'var(--bg-input)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        color: 'var(--text-primary)',
+                        outline: 'none'
+                    }}
+                    placeholder="Enter directory path..."
+                />
+                <button
+                    type="button"
+                    onClick={() => loadDirectories(inputPath)}
+                    style={{
+                        padding: '4px 12px',
+                        fontSize: '12px',
+                        backgroundColor: 'var(--bg-button)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                    }}
+                >
+                    Go
+                </button>
             </div>
 
             <div style={{ maxHeight: '200px', overflowY: 'auto', padding: '4px' }}>
@@ -115,11 +160,12 @@ export default function DirectoryPicker({ initialPath = '~', onSelect }: Directo
                             }}
                             autoFocus
                         />
-                        <button onClick={handleCreateDir} style={{ padding: '4px 8px', fontSize: '12px' }}>Create</button>
-                        <button onClick={() => setShowNewDirInput(false)} style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: 'transparent', border: '1px solid var(--border-color)' }}>Cancel</button>
+                        <button type="button" onClick={handleCreateDir} style={{ padding: '4px 8px', fontSize: '12px' }}>Create</button>
+                        <button type="button" onClick={() => setShowNewDirInput(false)} style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: 'transparent', border: '1px solid var(--border-color)' }}>Cancel</button>
                     </>
                 ) : (
                     <button
+                        type="button"
                         onClick={() => setShowNewDirInput(true)}
                         style={{
                             width: '100%',
