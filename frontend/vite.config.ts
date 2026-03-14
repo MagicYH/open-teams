@@ -15,7 +15,9 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': {
           target: `http://localhost:${backendPort}`,
-          changeOrigin: true
+          changeOrigin: true,
+          timeout: 600000,
+          proxyTimeout: 600000
         },
         '/ws': {
           target: `ws://localhost:${backendPort}`,

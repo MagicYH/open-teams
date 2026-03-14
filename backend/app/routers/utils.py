@@ -81,6 +81,9 @@ class GeneratePromptRequest(BaseModel):
     user_requirement: str = ""
     team_members: list[TeamMemberInfo] = []
 
+class GenerateTeamPromptsRequest(BaseModel):
+    members: list[TeamMemberInfo] = []
+
 
 class _PromptCollector(Client):
     """Minimal ACP client that just collects the agent's reply."""
@@ -115,7 +118,7 @@ async def generate_prompt(req: GeneratePromptRequest):
     cmd_parts = command.split()
 
     # Build the message sent to the agent
-    parts = [f"/gen_react_prompt"]
+    parts = [f"/gen_prompt"]
     parts.append(f"Role: {req.role}")
     if req.existing_prompt.strip():
         parts.append(f"Existing Prompt:\n{req.existing_prompt.strip()}")
@@ -166,3 +169,68 @@ async def generate_prompt(req: GeneratePromptRequest):
         raise HTTPException(status_code=502, detail="Agent returned an empty response")
 
     return {"prompt": generated}
+
+
+@router.post("/generate-team-prompts")
+async def generate_team_prompts(req: GenerateTeamPromptsRequest):
+    """
+    Sequentially spawn ACP agents to generate prompts for an entire team.
+    Sends the team context to emphasize boundary and division of labor.
+    """
+    command = settings.acp_start_command
+    cmd_parts = command.split()
+    
+    results = []
+    
+    team_lines = "\n".join(f"- {m.name} ({m.role})" for m in req.members)
+    
+    async def _generate_single_prompt(member: TeamMemberInfo, all_team_lines: str, command_parts: list[str]) -> dict:
+        parts = [f"/gen_prompt"]
+        parts.append(f"Role: {member.role}")
+        parts.append(f"Team Members (for reference when mentioning @name and defining division of labor):\n{all_team_lines}")
+        parts.append(f"User Requirement: Please generate a system prompt for the role of {member.name} ({member.role}). Explicitly define boundaries and how this role interacts with other specific team members mentioned above.")
+        content = "\n\n".join(parts)
+
+        collector = _PromptCollector()
+
+        try:
+            async with acp.spawn_agent_process(
+                collector,
+                command_parts[0],
+                *command_parts[1:],
+            ) as (connection, process):
+                await connection.initialize(protocol_version=acp.PROTOCOL_VERSION)
+                collector.connection = connection
+
+                resp = await connection.new_session(cwd="/tmp")
+                session_id = resp.session_id
+                
+                await connection.prompt(
+                    prompt=[text_block(content)],
+                    session_id=session_id,
+                )
+
+                # Give the agent a moment to flush any remaining chunks
+                try:
+                    await asyncio.wait_for(collector._done.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass  # reply may already be complete
+
+                generated = collector.reply
+                logger.info(f"generate_team_prompts: generated {len(generated)} chars for role={member.name}")
+                
+                return {
+                    "name": member.name,
+                    "role": member.role,
+                    "prompt": generated
+                }
+
+        except Exception as e:
+            logger.error(f"generate_team_prompts error for {member.name}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Prompt generation failed for {member.name}: {e}")
+
+    # Run generation in parallel for all members
+    tasks = [_generate_single_prompt(member, team_lines, cmd_parts) for member in req.members]
+    results = await asyncio.gather(*tasks)
+
+    return {"prompts": list(results)}

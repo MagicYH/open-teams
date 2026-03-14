@@ -390,6 +390,207 @@ function MemberModal({ projectId, member, members, onClose, onSaved }: MemberMod
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+// ─── Modal for One-Click Team Creation ───────────────────────────────────────
+
+interface TeamCreationModalProps {
+    projectId: number
+    existingMembers: TeamMember[]
+    onClose: () => void
+    onSuccess: () => void
+}
+
+function TeamCreationModal({ projectId, existingMembers, onClose, onSuccess }: TeamCreationModalProps) {
+    const existingCount = existingMembers.length
+    const [roles, setRoles] = useState<{ name: string; role: string; id: number }[]>(() => {
+        if (existingCount > 0) {
+            return existingMembers.map(m => ({ name: m.name, role: m.role, id: m.id }))
+        }
+        return [{ name: "", role: "", id: Date.now() }]
+    })
+    const [statusText, setStatusText] = useState("")
+    const [error, setError] = useState("")
+    const [isProcessing, setIsProcessing] = useState(false)
+
+    const handleAddRole = () => {
+        setRoles([...roles, { name: "", role: "", id: Date.now() }])
+    }
+
+    const handleRemoveRole = (id: number) => {
+        if (roles.length > 1) {
+            setRoles(roles.filter(r => r.id !== id))
+        }
+    }
+
+    const handleChange = (id: number, field: "name" | "role", value: string) => {
+        setRoles(roles.map(r => r.id === id ? { ...r, [field]: value } : r))
+    }
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault()
+        
+        // Validate
+        const validRoles = roles.filter(r => r.name.trim() && r.role.trim())
+        if (validRoles.length === 0) {
+            setError("Please add at least one valid role with a name and description.")
+            return
+        }
+        
+        const duplicateNames = new Set(validRoles.map(r => r.name.trim()))
+        if (duplicateNames.size !== validRoles.length) {
+            setError("Role names must be unique.")
+            return
+        }
+
+        setIsProcessing(true)
+        setError("")
+
+        try {
+            // Step 1: Generate Prompts
+            const membersPayload = validRoles.map(r => ({ name: r.name.trim(), role: r.role.trim() }))
+            console.log("TeamCreation: Generating prompts...", membersPayload)
+            setStatusText("Generating prompts for all roles... (this may take a minute)")
+            const res = await api.generateTeamPrompts(membersPayload)
+            const generatedPrompts = res.prompts
+            console.log("TeamCreation: Prompts generated successfully", generatedPrompts)
+
+            // Step 2: Delete existing members
+            if (existingCount > 0) {
+                console.log(`TeamCreation: Deleting ${existingCount} existing members...`)
+                setStatusText("Cleaning up existing team members...")
+                const existing = await api.getTeamMembers(projectId)
+                for (const member of existing) {
+                    await api.deleteMember(projectId, member.id)
+                }
+                console.log("TeamCreation: Existing members deleted")
+            }
+
+            // Step 3: Create new members
+            console.log("TeamCreation: Creating new members...")
+            setStatusText("Creating new team members...")
+            for (const item of generatedPrompts) {
+                await api.createMember(projectId, {
+                    name: item.name,
+                    role: item.role,
+                    prompt: item.prompt,
+                    acp_start_command: "" // Use default from backend
+                })
+            }
+            console.log("TeamCreation: Creation complete!")
+
+            onSuccess()
+            onClose()
+        } catch (err: any) {
+            console.error("TeamCreation Error:", err)
+            setError(err.message || "Team creation failed.")
+            setIsProcessing(false)
+            setStatusText("")
+        }
+    }
+
+    const labelStyle: React.CSSProperties = {
+        display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600, color: "var(--text-secondary)", letterSpacing: "0.5px", textTransform: "uppercase"
+    }
+    const inputStyle: React.CSSProperties = {
+        width: "100%", padding: "10px 12px", backgroundColor: "var(--bg-main)", border: "1px solid var(--border-color)",
+        borderRadius: "8px", color: "var(--text-primary)", fontSize: "14px", transition: "border-color 0.2s",
+        outline: "none"
+    }
+
+    return (
+        <div style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            backgroundColor: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(4px)"
+        }}>
+            <div style={{
+                backgroundColor: "var(--bg-panel)", width: "600px", maxWidth: "90vw",
+                maxHeight: "90vh", borderRadius: "16px", padding: "30px",
+                display: "flex", flexDirection: "column", gap: "24px",
+                boxShadow: "0 20px 40px rgba(0,0,0,0.4)"
+            }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>🚀 One-Click Team Creation</h2>
+                    <button onClick={onClose} disabled={isProcessing} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: isProcessing ? "not-allowed" : "pointer", fontSize: "20px" }}>✕</button>
+                </div>
+
+                {existingCount > 0 && (
+                    <div style={{ backgroundColor: "rgba(255, 69, 58, 0.1)", color: "#ff453a", padding: "12px 16px", borderRadius: "8px", display: "flex", gap: "12px", alignItems: "flex-start", fontSize: "14px" }}>
+                        <span>⚠️</span>
+                        <span><strong>Warning:</strong> Creating a new team will delete all {existingCount} existing team members in this project! (We've pre-filled them below so you can update or confirm them).</span>
+                    </div>
+                )}
+
+                <div style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1.5 }}>
+                    Define the roles for your new team. We will automatically generate highly optimized system prompts for each role, explicitly emphasizing the division of labor between them.
+                </div>
+
+                <form id="team-creation-form" onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px", flex: 1, overflowY: "auto", paddingRight: "8px" }}>
+                    {roles.map((role) => (
+                        <div key={role.id} style={{ display: "flex", gap: "12px", alignItems: "flex-start", backgroundColor: "var(--bg-main)", padding: "16px", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
+                            <div style={{ flex: "0 0 160px" }}>
+                                <label style={labelStyle}>Name</label>
+                                <input
+                                    style={inputStyle}
+                                    placeholder="e.g. PM or Dev"
+                                    value={role.name}
+                                    onChange={e => handleChange(role.id, "name", e.target.value)}
+                                    disabled={isProcessing}
+                                    required
+                                />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                                <label style={labelStyle}>Description / Responsibility</label>
+                                <input
+                                    style={inputStyle}
+                                    placeholder="e.g. Product Manager focused on planning"
+                                    value={role.role}
+                                    onChange={e => handleChange(role.id, "role", e.target.value)}
+                                    disabled={isProcessing}
+                                    required
+                                />
+                            </div>
+                            {roles.length > 1 && (
+                                <button
+                                    type="button"
+                                    onClick={() => handleRemoveRole(role.id)}
+                                    disabled={isProcessing}
+                                    style={{ marginTop: "25px", background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: "8px", borderRadius: "4px" }}
+                                    title="Remove Role"
+                                >✕</button>
+                            )}
+                        </div>
+                    ))}
+                    
+                    <button
+                        type="button"
+                        onClick={handleAddRole}
+                        disabled={isProcessing}
+                        style={{ alignSelf: "flex-start", background: "none", border: "1px dashed var(--border-color)", padding: "10px 16px", color: "var(--text-secondary)", borderRadius: "8px", fontSize: "13px", fontWeight: 600, cursor: isProcessing ? "not-allowed" : "pointer" }}
+                    >
+                        + Add another role
+                    </button>
+                </form>
+
+                {error && <div style={{ color: "#ff453a", fontSize: "13px", backgroundColor: "rgba(255,69,58,0.1)", padding: "10px 14px", borderRadius: "8px" }}>{error}</div>}
+                
+                {statusText && (
+                    <div style={{ color: "var(--accent-color)", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ display: "inline-block", width: "14px", height: "14px", border: "2px solid rgba(0,122,255,0.3)", borderTopColor: "currentColor", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                        {statusText}
+                    </div>
+                )}
+
+                <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end", marginTop: "8px" }}>
+                    <button type="button" onClick={onClose} disabled={isProcessing} style={{ padding: "10px 20px", backgroundColor: "transparent", border: "1px solid var(--border-color)", borderRadius: "8px", color: "var(--text-secondary)", cursor: isProcessing ? "not-allowed" : "pointer", fontWeight: 600 }}>Cancel</button>
+                    <button type="submit" form="team-creation-form" disabled={isProcessing} style={{ padding: "10px 24px", background: isProcessing ? "var(--border-color)" : "linear-gradient(135deg, #7c3aed, #4f46e5)", border: "none", borderRadius: "8px", color: "white", cursor: isProcessing ? "not-allowed" : "pointer", fontWeight: 600 }}>
+                        {isProcessing ? "Processing..." : "Create Team"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    )
+}
+
 export default function ProjectDetail() {
     const { projectId } = useParams()
     const [features, setFeatures] = useState<Feature[]>([])
@@ -402,6 +603,7 @@ export default function ProjectDetail() {
     // Modal state
     const [modalOpen, setModalOpen] = useState(false)
     const [editingMember, setEditingMember] = useState<TeamMember | null>(null)
+    const [teamCreationOpen, setTeamCreationOpen] = useState(false)
 
     const loadData = async () => {
         if (!projectId) return
@@ -589,22 +791,28 @@ export default function ProjectDetail() {
 
                 {/* Team Column */}
                 <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                         <h2 style={{ fontSize: '18px', margin: 0, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px' }}>Team Members</h2>
+                    </div>
+                    <div style={{ display: "flex", gap: "12px", marginBottom: "20px" }}>
+                        <button
+                            onClick={() => setTeamCreationOpen(true)}
+                            style={{
+                                flex: 1,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px 14px',
+                                background: 'linear-gradient(135deg, #7c3aed, #4f46e5)', border: 'none', borderRadius: '8px',
+                                color: 'white', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+                            }}
+                        >
+                            🚀 Auto Create
+                        </button>
                         <button
                             onClick={openAddModal}
                             style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                padding: '8px 14px',
-                                backgroundColor: 'var(--accent-color)',
-                                border: 'none',
-                                borderRadius: '8px',
-                                color: 'white',
-                                fontSize: '13px',
-                                fontWeight: 600,
-                                cursor: 'pointer',
+                                flex: 1,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '10px 14px',
+                                backgroundColor: 'var(--accent-color)', border: 'none', borderRadius: '8px',
+                                color: 'white', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
                             }}
                         >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -702,6 +910,15 @@ export default function ProjectDetail() {
                     members={members}
                     onClose={() => setModalOpen(false)}
                     onSaved={loadData}
+                />
+            )}
+
+            {teamCreationOpen && projectId && (
+                <TeamCreationModal
+                    projectId={parseInt(projectId)}
+                    existingMembers={members}
+                    onClose={() => setTeamCreationOpen(false)}
+                    onSuccess={loadData}
                 />
             )}
         </div>

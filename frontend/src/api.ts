@@ -89,7 +89,12 @@ class ApiClient {
         return this.request<{ id: number, project_id: number, members: TeamMember[] }>(`/api/projects/${projectId}/team`);
     }
 
-    createMember(projectId: number, data: { name: string; role: string; prompt: string; acp_start_command: string }) {
+    async getTeamMembers(projectId: number) {
+        const data = await this.request<{ id: number, project_id: number, members: TeamMember[] }>(`/api/projects/${projectId}/team`);
+        return data.members || [];
+    }
+
+    createMember(projectId: number, data: { name: string, role: string, prompt: string, acp_start_command?: string }) {
         return this.request<TeamMember>(`/api/projects/${projectId}/team/members`, {
             method: "POST",
             body: JSON.stringify(data),
@@ -139,6 +144,13 @@ class ApiClient {
         return this.request<{ prompt: string }>("/api/utils/generate-prompt", {
             method: "POST",
             body: JSON.stringify({ role, existing_prompt: existingPrompt, user_requirement: userRequirement, team_members: teamMembers }),
+        });
+    }
+
+    generateTeamPrompts(members: { name: string; role: string }[]) {
+        return this.request<{ prompts: { name: string; role: string; prompt: string }[] }>("/api/utils/generate-team-prompts", {
+            method: "POST",
+            body: JSON.stringify({ members }),
         });
     }
 }
